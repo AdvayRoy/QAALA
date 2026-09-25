@@ -202,7 +202,7 @@ export function CommandCenter() {
   const commanderName = snapshot?.principals.find((p) => p.role === "ISSUER_COMMANDER")?.name ?? "Entity A commander";
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0b0e13] text-[13px] text-[#d5dbe5]">
+    <div className="flex h-screen min-h-[980px] w-screen flex-col overflow-hidden bg-[#0b0e13] text-[13px] text-[#d5dbe5]">
       {/* Header */}
       <header className="flex h-12 shrink-0 items-center gap-5 border-b border-[#1f2630] bg-[#0d1117] px-5">
         <div className="flex items-center gap-3">
@@ -346,7 +346,7 @@ export function CommandCenter() {
               <Legend color="#f08a4b" label="Isolated" />
             </div>
           </div>
-          <div className="min-h-0 flex-1 px-3">{snapshot ? <AuthorityGraphView snapshot={snapshot} focus={focus} selected={selectedRef} onSelect={selectObject} /> : null}</div>
+          <div className="min-h-[300px] flex-1 px-3">{snapshot ? <AuthorityGraphView snapshot={snapshot} focus={focus} selected={selectedRef} onSelect={selectObject} /> : null}</div>
 
           <div className="grid shrink-0 grid-cols-3 divide-x divide-[#1f2630] border-t border-[#1f2630]">
             <Console title="Entity A · Command" who={commanderName}>

@@ -19,7 +19,7 @@ const C = {
   tile: "#141a23",
   text: "#e3e8ef",
   muted: "#8a94a3",
-  faint: "#3a4452",
+  faint: "#525d6c",
   allow: "#3ecf8e",
   deny: "#ef5f6a",
   stepup: "#e5b43c",
