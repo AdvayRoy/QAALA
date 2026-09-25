@@ -2,7 +2,7 @@
 
 import type { Snapshot } from "@/lib/snapshot";
 import type { Decision } from "@/lib/domain/types";
-import { hhmm, type StopPoint } from "./evidence";
+import { minutesRemaining, type ObjectRef, type StopPoint } from "./evidence";
 
 export interface GraphFocus {
   resourceId: string | null;
@@ -14,32 +14,37 @@ const W = 1000;
 const H = 600;
 
 const C = {
-  panel: "#0f1319",
-  panelLine: "#232b36",
-  text: "#dfe5ee",
-  muted: "#7d8896",
+  canvas: "#0b0e13",
+  domain: "#0e131a",
+  tile: "#141a23",
+  text: "#e3e8ef",
+  muted: "#8a94a3",
   faint: "#3a4452",
   allow: "#3ecf8e",
   deny: "#ef5f6a",
   stepup: "#e5b43c",
   info: "#6aa6ff",
   isolated: "#f08a4b",
+  trace: "#c3cad4",
 };
 
-// Fixed operational layout. Left trust domain (Entity A), boundary, right trust domain (Entity B).
-const A = { x: 24, y: 40, w: 318, h: 508 };
-const B = { x: 598, y: 40, w: 378, h: 508 };
-const BOUNDARY_X = B.x;
-const BRIDGE_Y = 440;
+const SANS = "var(--font-geist-sans)";
 
-const AGENT = { x: A.x + 24, y: 108, w: 270, h: 62 };
-const MISSION = { x: A.x + 24, y: 250, w: 270, h: 62 };
-const LEASE = { x: A.x + 24, y: BRIDGE_Y - 34, w: 270, h: 68 };
+// Fixed operational layout: Entity A chain on the left, one boundary, Entity B resources on the right.
+const A_X = 36;
+const TILE_W = 300;
+const TILE_H = 72;
+const BOUNDARY_X = 560;
+const BRIDGE_Y = 424;
 
-const TREE_X = B.x + 40;
-const ROW_X = B.x + 64;
-const ROW_W = B.w - 88;
-const ROWS: Record<string, number> = { "telemetry-b": 130, "connector-b-17": 278, "citizen-records-b": 426 };
+const AGENT = { x: A_X, y: 100, w: TILE_W, h: TILE_H };
+const MISSION = { x: A_X, y: 236, w: TILE_W, h: TILE_H };
+const LEASE = { x: A_X, y: BRIDGE_Y - TILE_H / 2, w: TILE_W, h: TILE_H };
+
+const TREE_X = BOUNDARY_X + 44;
+const ROW_X = BOUNDARY_X + 76;
+const ROW_W = W - ROW_X - 36;
+const ROWS: Record<string, number> = { "telemetry-b": 92, "connector-b-17": 240, "citizen-records-b": 388 };
 
 type ResourceState = "ALLOWED" | "HUMAN-GATED" | "DENIED" | "ISOLATED" | "NO AUTHORITY";
 
@@ -85,7 +90,25 @@ function toneColor(d: Decision) {
   return d === "ALLOW" ? C.allow : d === "HUMAN_APPROVAL_REQUIRED" ? C.stepup : C.deny;
 }
 
-export function AuthorityGraphView({ snapshot, focus }: { snapshot: Snapshot; focus: GraphFocus | null }) {
+function sameRef(a: ObjectRef | null, b: ObjectRef) {
+  if (!a) return false;
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "resource" && b.kind === "resource") return a.id === b.id;
+  if (a.kind === "entity" && b.kind === "entity") return a.id === b.id;
+  return true;
+}
+
+export function AuthorityGraphView({
+  snapshot,
+  focus,
+  selected,
+  onSelect,
+}: {
+  snapshot: Snapshot;
+  focus: GraphFocus | null;
+  selected: ObjectRef | null;
+  onSelect: (ref: ObjectRef) => void;
+}) {
   const lease = snapshot.lease;
   const mission = snapshot.mission;
   const live = lease ? lease.status !== "REVOKED" && lease.status !== "EXPIRED" : false;
@@ -93,31 +116,29 @@ export function AuthorityGraphView({ snapshot, focus }: { snapshot: Snapshot; fo
   const closed = !!lease && (lease.status === "REVOKED" || lease.status === "EXPIRED");
   const states = resourceStates(snapshot);
   const pending = snapshot.pending;
-  const approver = snapshot.principals.find((p) => p.role === "RECEIVER_APPROVER");
-  const commander = snapshot.principals.find((p) => p.role === "ISSUER_COMMANDER");
 
-  const fc = focus ? toneColor(focus.decision) : null;
+  const trace = focus ? (focus.decision === "ALLOW" ? C.allow : C.trace) : null;
   const reaches = (point: StopPoint) => {
     if (!focus) return false;
     const order: StopPoint[] = ["agent", "mission", "lease", "boundary", "resource", "none"];
     return order.indexOf(point) < order.indexOf(focus.stopAt) || focus.stopAt === "none";
   };
   const stoppedAt = (point: StopPoint) => !!focus && focus.stopAt === point;
+  const glowFor = (point: StopPoint) => (stoppedAt(point) ? C.deny : trace && reaches(point) ? trace : null);
 
-  const leaseTitle = !lease ? "No authority lease" : "Temporary Authority Lease";
-  const leaseStatus = !lease
+  const leaseState = !lease
     ? "NONE"
     : lease.status === "PROPOSED"
-      ? "PROPOSED · NOT APPROVED"
+      ? "PROPOSED · AWAITING ENTITY A"
       : lease.status === "ISSUER_APPROVED"
         ? "ENTITY A APPROVED · AWAITING ENTITY B"
         : lease.status === "ACTIVE"
-          ? `ACTIVE · UNTIL ${hhmm(lease.expiresAt)}`
+          ? `ACTIVE · ${minutesRemaining(lease.expiresAt, snapshot.serverTime)} MIN REMAINING`
           : lease.status;
   const leaseColor = !lease ? C.faint : lease.status === "ACTIVE" ? C.allow : closed ? C.deny : lease.status === "ISSUER_APPROVED" ? C.info : C.muted;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" role="img" aria-label="Authority graph derived from server state">
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full select-none" role="img" aria-label="Common operating picture derived from server state">
       <defs>
         {MARKER_KEYS.map(([k, v]) => (
           <marker key={k} id={`m-${k}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -131,216 +152,173 @@ export function AuthorityGraphView({ snapshot, focus }: { snapshot: Snapshot; fo
         ))}
       </defs>
 
-      {/* Trust domains */}
-      <Domain box={A} title="ENTITY A" sub="REQUESTING AGENCY · INCIDENT RESPONSE" />
-      <Domain box={B} title="ENTITY B" sub="RESOURCE OWNER · CIVIC INFRASTRUCTURE" />
+      {/* Entity B is a separate trust domain: one tinted region, one hard boundary. */}
+      <rect x={BOUNDARY_X} y={16} width={W - BOUNDARY_X} height={H - 32} fill={C.domain} />
 
-      {/* Entity C — visible, not party */}
-      <g opacity={0.55}>
-        <rect x={A.x} y={A.y + A.h + 10} width={A.w} height={28} fill="none" stroke={C.panelLine} strokeDasharray="3 4" />
-        <text x={A.x + 14} y={A.y + A.h + 29} fontSize="11" fill={C.muted} fontFamily="var(--font-geist-sans)" letterSpacing="0.08em">
-          ENTITY C · REGIONAL TRANSIT — not party to Incident 024
-        </text>
-      </g>
+      <DomainHeading x={A_X} title="ENTITY A" sub="Requesting agency" selected={sameRef(selected, { kind: "entity", id: "entity-a" })} onClick={() => onSelect({ kind: "entity", id: "entity-a" })} />
+      <DomainHeading
+        x={ROW_X}
+        title="ENTITY B"
+        sub="Resource owner · separate trust domain"
+        selected={sameRef(selected, { kind: "entity", id: "entity-b" })}
+        onClick={() => onSelect({ kind: "entity", id: "entity-b" })}
+      />
 
-      {/* Entity A chain: Agent → Mission → Lease */}
-      <ObjectBox
+      <text x={A_X} y={556} fontSize="11" fill={C.faint} fontFamily={SANS}>
+        Entity C · Regional transit — not party to Incident 024
+      </text>
+
+      {/* Entity A chain: Agent → Mission → Temporary authority */}
+      <Tile
         box={AGENT}
-        kind="AGENT"
+        kind="Autonomous response agent"
         title="Agent 47"
-        status="AUTONOMOUS · ENTITY A"
-        color={C.text}
-        active={true}
-        glow={fc && (reaches("agent") || stoppedAt("agent")) ? (stoppedAt("agent") ? C.deny : fc) : null}
+        state={bridgeActive ? "AUTHORIZED ON ENTITY B" : "NO CROSS-AGENCY AUTHORITY"}
+        color={bridgeActive ? C.allow : C.muted}
+        active
+        glow={glowFor("agent")}
+        selected={sameRef(selected, { kind: "agent" })}
+        onClick={() => onSelect({ kind: "agent" })}
       />
       <Link
         x1={AGENT.x + AGENT.w / 2}
         y1={AGENT.y + AGENT.h}
         x2={MISSION.x + MISSION.w / 2}
         y2={MISSION.y}
-        label="acts under"
         color={mission.status === "DECLARED" ? C.muted : C.faint}
         dashed={mission.status !== "DECLARED"}
-        highlight={fc && reaches("agent") ? fc : null}
+        highlight={trace && reaches("agent") ? trace : null}
       />
-      <ObjectBox
+      <Tile
         box={MISSION}
-        kind="MISSION"
-        title={`Incident 024`}
-        status={mission.status === "DECLARED" ? `HIGH · DECLARED BY ${(commander?.name ?? "ENTITY A").toUpperCase()}` : "HIGH · NOT DECLARED"}
-        color={mission.status === "DECLARED" ? C.text : C.muted}
+        kind="Mission"
+        title="Incident 024"
+        state={mission.status === "DECLARED" ? "HIGH · ACTIVE" : mission.status === "CLOSED" ? "HIGH · CLOSED" : "HIGH · NOT DECLARED"}
+        color={mission.status === "DECLARED" ? C.info : C.muted}
         active={mission.status === "DECLARED"}
-        glow={fc && (reaches("mission") || stoppedAt("mission")) ? (stoppedAt("mission") ? C.deny : fc) : null}
+        glow={glowFor("mission")}
+        selected={sameRef(selected, { kind: "mission" })}
+        onClick={() => onSelect({ kind: "mission" })}
       />
       <Link
         x1={MISSION.x + MISSION.w / 2}
         y1={MISSION.y + MISSION.h}
         x2={LEASE.x + LEASE.w / 2}
         y2={LEASE.y}
-        label={lease?.issuerApprovedBy ? "authorizes · approved by Entity A" : "authorizes"}
         color={live ? C.muted : C.faint}
         dashed={!live}
-        highlight={fc && reaches("mission") ? fc : null}
+        highlight={trace && reaches("mission") ? trace : null}
       />
-      <ObjectBox
+      <Tile
+        key={`lease-${lease?.id ?? "none"}-${lease?.status ?? "none"}`}
         box={LEASE}
-        kind="AUTHORITY LEASE"
-        title={leaseTitle}
-        status={leaseStatus}
+        kind="Temporary authority"
+        title={lease ? "Lease on Entity B" : "No lease"}
+        state={leaseState}
         color={leaseColor}
         active={!!lease}
-        dashedBorder={!lease}
-        glow={fc && (reaches("lease") || stoppedAt("lease")) ? (stoppedAt("lease") ? C.deny : fc) : null}
-        key={`lease-${lease?.id ?? "none"}-${lease?.status ?? "none"}`}
+        ghost={!lease}
+        glow={glowFor("lease")}
+        selected={sameRef(selected, { kind: "lease" })}
+        onClick={() => onSelect({ kind: "lease" })}
       />
 
-      {/* Mandate bridge across trust domains */}
-      <Bridge
-        x1={LEASE.x + LEASE.w}
-        x2={BOUNDARY_X}
-        y={BRIDGE_Y}
-        active={bridgeActive}
-        closed={closed}
-        pending={!!lease && !bridgeActive && !closed}
-        acceptedBy={lease?.receiverAcceptedBy ? approver?.name ?? "Entity B" : null}
-        highlight={fc && reaches("lease") ? fc : null}
-      />
+      {/* Authority bridge across the boundary */}
+      <Bridge x1={LEASE.x + LEASE.w} x2={BOUNDARY_X} y={BRIDGE_Y} active={bridgeActive} closed={closed} pending={!!lease && !bridgeActive && !closed} />
 
-      {/* Policy boundary */}
-      <g>
-        <line x1={BOUNDARY_X} y1={B.y - 6} x2={BOUNDARY_X} y2={B.y + B.h + 6} stroke={C.text} strokeWidth={2.5} opacity={0.85} />
-        <text x={BOUNDARY_X} y={B.y + B.h + 29} fontSize="10" fill={C.muted} fontFamily="var(--font-geist-sans)" letterSpacing="0.16em" textAnchor="middle">
-          ENTITY B POLICY BOUNDARY
-        </text>
-      </g>
+      {/* Boundary */}
+      <line x1={BOUNDARY_X} y1={16} x2={BOUNDARY_X} y2={H - 16} stroke={C.text} strokeWidth={2} opacity={0.75} />
+      <text x={BOUNDARY_X} y={H - 2} fontSize="10.5" fill={C.muted} fontFamily={SANS} textAnchor="middle" letterSpacing="0.1em">
+        ENTITY B POLICY BOUNDARY
+      </text>
 
-      {/* Resource tree inside Entity B */}
       <ResourceTree
         snapshot={snapshot}
         states={states}
         bridgeActive={bridgeActive}
         focus={focus}
-        pendingLabel={pending?.status === "PENDING" ? "APPROVAL PENDING" : pending?.status === "APPROVED" ? "EXACT APPROVAL ISSUED · ONE USE" : null}
+        selected={selected}
+        onSelect={onSelect}
+        pendingLabel={pending?.status === "PENDING" ? "Approval pending with Entity B" : pending?.status === "APPROVED" ? "Exact approval issued · one use" : null}
       />
     </svg>
   );
 }
 
-function Domain({ box, title, sub }: { box: { x: number; y: number; w: number; h: number }; title: string; sub: string }) {
+function DomainHeading({ x, title, sub, selected, onClick }: { x: number; title: string; sub: string; selected: boolean; onClick: () => void }) {
   return (
-    <g>
-      <rect x={box.x} y={box.y} width={box.w} height={box.h} fill={C.panel} stroke={C.panelLine} />
-      <text x={box.x + 16} y={box.y + 24} fontSize="14" fontWeight={600} fill={C.text} fontFamily="var(--font-geist-sans)" letterSpacing="0.14em">
+    <g onClick={onClick} className="cursor-pointer">
+      <rect x={x - 10} y={26} width={300} height={44} fill={selected ? "#ffffff" : "transparent"} opacity={selected ? 0.05 : 0} />
+      <text x={x} y={46} fontSize="15" fontWeight={600} fill={C.text} fontFamily={SANS} letterSpacing="0.14em">
         {title}
       </text>
-      <text x={box.x + 16} y={box.y + 40} fontSize="10" fill={C.muted} fontFamily="var(--font-geist-sans)" letterSpacing="0.12em">
+      <text x={x} y={63} fontSize="11" fill={C.muted} fontFamily={SANS}>
         {sub}
       </text>
-      <line x1={box.x} y1={box.y + 52} x2={box.x + box.w} y2={box.y + 52} stroke={C.panelLine} />
     </g>
   );
 }
 
-function ObjectBox({
+function Tile({
   box,
   kind,
   title,
-  status,
+  state,
   color,
   active,
-  dashedBorder,
+  ghost,
   glow,
+  selected,
+  onClick,
 }: {
   box: { x: number; y: number; w: number; h: number };
   kind: string;
   title: string;
-  status: string;
+  state: string;
   color: string;
   active: boolean;
-  dashedBorder?: boolean;
+  ghost?: boolean;
   glow: string | null;
+  selected: boolean;
+  onClick: () => void;
 }) {
   return (
-    <g className="qalaa-fade">
-      {glow && <rect x={box.x - 3} y={box.y - 3} width={box.w + 6} height={box.h + 6} fill="none" stroke={glow} strokeWidth={1.5} opacity={0.9} />}
-      <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#131920" stroke={active ? color : C.faint} strokeWidth={1.4} strokeDasharray={dashedBorder ? "5 4" : undefined} />
-      <rect x={box.x} y={box.y} width={4} height={box.h} fill={active ? color : C.faint} />
-      <text x={box.x + 16} y={box.y + 17} fontSize="9.5" fill={C.muted} fontFamily="var(--font-geist-sans)" letterSpacing="0.16em">
-        {kind}
+    <g className="qalaa-fade cursor-pointer" onClick={onClick}>
+      {glow && <rect x={box.x - 4} y={box.y - 4} width={box.w + 8} height={box.h + 8} fill="none" stroke={glow} strokeWidth={1.5} opacity={0.9} />}
+      <rect x={box.x} y={box.y} width={box.w} height={box.h} fill={ghost ? "transparent" : C.tile} stroke={selected ? C.text : ghost ? C.faint : "none"} strokeWidth={selected ? 1.2 : 1} strokeDasharray={ghost && !selected ? "4 5" : undefined} />
+      <rect x={box.x} y={box.y} width={3} height={box.h} fill={active ? color : C.faint} />
+      <text x={box.x + 18} y={box.y + 20} fontSize="10.5" fill={C.muted} fontFamily={SANS} letterSpacing="0.1em">
+        {kind.toUpperCase()}
       </text>
-      <text x={box.x + 16} y={box.y + 36} fontSize="15" fontWeight={600} fill={active ? C.text : C.muted} fontFamily="var(--font-geist-sans)">
+      <text x={box.x + 18} y={box.y + 43} fontSize="17" fontWeight={600} fill={active ? C.text : C.muted} fontFamily={SANS}>
         {title}
       </text>
-      <text x={box.x + 16} y={box.y + box.h - 10} fontSize="10" fill={active ? color : C.faint} fontFamily="var(--font-geist-mono)" letterSpacing="0.06em">
-        {status}
+      <text x={box.x + 18} y={box.y + 61} fontSize="11.5" fontWeight={600} fill={active ? color : C.faint} fontFamily={SANS} letterSpacing="0.06em">
+        {state}
       </text>
     </g>
   );
 }
 
-function Link({
-  x1,
-  y1,
-  x2,
-  y2,
-  label,
-  color,
-  dashed,
-  highlight,
-}: {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  label: string;
-  color: string;
-  dashed: boolean;
-  highlight: string | null;
-}) {
+function Link({ x1, y1, x2, y2, color, dashed, highlight }: { x1: number; y1: number; x2: number; y2: number; color: string; dashed: boolean; highlight: string | null }) {
   const stroke = highlight ?? color;
-  return (
-    <g className="qalaa-fade">
-      <line x1={x1} y1={y1 + 2} x2={x2} y2={y2 - 2} stroke={stroke} strokeWidth={highlight ? 2.2 : 1.4} strokeDasharray={dashed ? "4 4" : undefined} markerEnd={arrowFor(stroke)} />
-      <text x={x1 + 12} y={(y1 + y2) / 2 + 4} fontSize="10.5" fill={highlight ?? C.muted} fontFamily="var(--font-geist-sans)" letterSpacing="0.04em">
-        {label}
-      </text>
-    </g>
-  );
+  return <line className="qalaa-fade" x1={x1} y1={y1 + 3} x2={x2} y2={y2 - 3} stroke={stroke} strokeWidth={highlight ? 2.2 : 1.4} strokeDasharray={dashed ? "4 4" : undefined} markerEnd={arrowFor(stroke)} />;
 }
 
-function Bridge({
-  x1,
-  x2,
-  y,
-  active,
-  closed,
-  pending,
-  acceptedBy,
-  highlight,
-}: {
-  x1: number;
-  x2: number;
-  y: number;
-  active: boolean;
-  closed: boolean;
-  pending: boolean;
-  acceptedBy: string | null;
-  highlight: string | null;
-}) {
+function Bridge({ x1, x2, y, active, closed, pending }: { x1: number; x2: number; y: number; active: boolean; closed: boolean; pending: boolean }) {
   const mid = (x1 + x2) / 2;
   if (active) {
-    const stroke = highlight ?? C.allow;
+    const stroke = C.allow;
     return (
       <g className="qalaa-bridge-in" key="bridge-active">
-        <line x1={x1 + 6} y1={y - 5} x2={x2 - 4} y2={y - 5} stroke={stroke} strokeWidth={2.4} />
-        <line x1={x1 + 6} y1={y + 5} x2={x2 - 4} y2={y + 5} stroke={stroke} strokeWidth={2.4} />
-        <line x1={x1 + 6} y1={y} x2={x2 - 6} y2={y} stroke={stroke} strokeWidth={1.2} opacity={0.9} markerEnd={arrowFor(stroke, true)} />
-        <rect x={mid - 92} y={y - 30} width={184} height={18} fill="#0b0e13" stroke={stroke} strokeWidth={1} />
-        <text x={mid} y={y - 17} fontSize="10" fontWeight={600} fill={stroke} fontFamily="var(--font-geist-sans)" letterSpacing="0.16em" textAnchor="middle">
-          TEMPORARY MANDATE · ACTIVE
+        <line x1={x1 + 8} y1={y - 5} x2={x2 - 4} y2={y - 5} stroke={stroke} strokeWidth={2.4} />
+        <line x1={x1 + 8} y1={y + 5} x2={x2 - 4} y2={y + 5} stroke={stroke} strokeWidth={2.4} />
+        <line x1={x1 + 8} y1={y} x2={x2 - 6} y2={y} stroke={stroke} strokeWidth={1.2} opacity={0.9} markerEnd={arrowFor(stroke, true)} />
+        <text x={mid} y={y - 16} fontSize="12" fontWeight={600} fill={stroke} fontFamily={SANS} letterSpacing="0.1em" textAnchor="middle">
+          TEMPORARY AUTHORITY · ACTIVE
         </text>
-        <text x={mid} y={y + 26} fontSize="10" fill={C.muted} fontFamily="var(--font-geist-sans)" textAnchor="middle" letterSpacing="0.04em">
-          {acceptedBy ? "Entity B accepted · human approver" : "Entity B accepted"} · Policy B ceiling
+        <text x={mid} y={y + 26} fontSize="11" fill={C.muted} fontFamily={SANS} textAnchor="middle">
+          Accepted by Entity B under its own policy ceiling
         </text>
       </g>
     );
@@ -348,24 +326,24 @@ function Bridge({
   if (closed) {
     return (
       <g className="qalaa-fade" key="bridge-closed">
-        <line x1={x1 + 6} y1={y} x2={x1 + 60} y2={y} stroke={C.deny} strokeWidth={2} />
-        <line x1={x1 + 60} y1={y - 10} x2={x1 + 76} y2={y + 10} stroke={C.deny} strokeWidth={2} />
-        <line x1={x1 + 76} y1={y - 10} x2={x1 + 60} y2={y + 10} stroke={C.deny} strokeWidth={2} />
-        <line x1={x1 + 90} y1={y} x2={x2 - 4} y2={y} stroke={C.faint} strokeWidth={1} strokeDasharray="2 6" />
-        <text x={mid + 20} y={y - 14} fontSize="10" fontWeight={600} fill={C.deny} fontFamily="var(--font-geist-sans)" letterSpacing="0.16em" textAnchor="middle">
-          MANDATE CLOSED
+        <line x1={x1 + 8} y1={y} x2={x1 + 56} y2={y} stroke={C.deny} strokeWidth={2} />
+        <line x1={x1 + 58} y1={y - 9} x2={x1 + 74} y2={y + 9} stroke={C.deny} strokeWidth={2} />
+        <line x1={x1 + 74} y1={y - 9} x2={x1 + 58} y2={y + 9} stroke={C.deny} strokeWidth={2} />
+        <line x1={x1 + 88} y1={y} x2={x2 - 4} y2={y} stroke={C.faint} strokeWidth={1} strokeDasharray="2 6" />
+        <text x={mid + 24} y={y - 16} fontSize="12" fontWeight={600} fill={C.deny} fontFamily={SANS} letterSpacing="0.1em" textAnchor="middle">
+          AUTHORITY CLOSED
         </text>
-        <text x={mid + 20} y={y + 22} fontSize="10" fill={C.muted} fontFamily="var(--font-geist-sans)" textAnchor="middle">
-          lease no longer active · no cross-agency path
+        <text x={mid + 24} y={y + 26} fontSize="11" fill={C.muted} fontFamily={SANS} textAnchor="middle">
+          No cross-agency path
         </text>
       </g>
     );
   }
   return (
     <g className="qalaa-fade" key="bridge-none">
-      <line x1={x1 + 6} y1={y} x2={x2 - 4} y2={y} stroke={highlight ?? C.faint} strokeWidth={1.2} strokeDasharray="2 6" />
-      <text x={mid} y={y - 14} fontSize="10" fill={highlight ?? C.muted} fontFamily="var(--font-geist-sans)" letterSpacing="0.16em" textAnchor="middle">
-        {pending ? "NO MANDATE · AWAITING ENTITY B" : "NO CROSS-AGENCY MANDATE"}
+      <line x1={x1 + 8} y1={y} x2={x2 - 4} y2={y} stroke={pending ? C.info : C.faint} strokeWidth={1.2} strokeDasharray={pending ? "6 5" : "2 6"} />
+      <text x={mid} y={y - 16} fontSize="12" fontWeight={600} fill={pending ? C.info : C.faint} fontFamily={SANS} letterSpacing="0.1em" textAnchor="middle">
+        {pending ? "AWAITING ENTITY B" : "NO AUTHORITY"}
       </text>
     </g>
   );
@@ -376,32 +354,35 @@ function ResourceTree({
   states,
   bridgeActive,
   focus,
+  selected,
+  onSelect,
   pendingLabel,
 }: {
   snapshot: Snapshot;
   states: ReturnType<typeof resourceStates>;
   bridgeActive: boolean;
   focus: GraphFocus | null;
+  selected: ObjectRef | null;
+  onSelect: (ref: ObjectRef) => void;
   pendingLabel: string | null;
 }) {
-  const landingX = BOUNDARY_X;
   const ids = Object.keys(ROWS);
-  const top = ROWS[ids[0]] + 20;
-  const bottom = ROWS[ids[ids.length - 1]] + 20;
+  const top = ROWS[ids[0]] + TILE_H / 2;
+  const bottom = ROWS[ids[ids.length - 1]] + TILE_H / 2;
   const fc = focus ? toneColor(focus.decision) : null;
   const boundaryStop = focus?.stopAt === "boundary";
+  const trunkColor = bridgeActive ? C.allow : C.faint;
 
   return (
     <g>
-      {/* trunk from the bridge landing */}
-      <line x1={landingX} y1={BRIDGE_Y} x2={TREE_X} y2={BRIDGE_Y} stroke={bridgeActive ? C.allow : C.faint} strokeWidth={bridgeActive ? 2 : 1} strokeDasharray={bridgeActive ? undefined : "2 5"} />
-      <line x1={TREE_X} y1={top} x2={TREE_X} y2={Math.max(bottom, BRIDGE_Y)} stroke={bridgeActive ? C.allow : C.faint} strokeWidth={bridgeActive ? 2 : 1} strokeDasharray={bridgeActive ? undefined : "2 5"} opacity={0.8} />
+      <line x1={BOUNDARY_X} y1={BRIDGE_Y} x2={TREE_X} y2={BRIDGE_Y} stroke={trunkColor} strokeWidth={bridgeActive ? 2 : 1} strokeDasharray={bridgeActive ? undefined : "2 5"} />
+      <line x1={TREE_X} y1={top} x2={TREE_X} y2={Math.max(bottom, BRIDGE_Y)} stroke={trunkColor} strokeWidth={bridgeActive ? 2 : 1} strokeDasharray={bridgeActive ? undefined : "2 5"} opacity={0.8} />
 
       {boundaryStop && (
         <g className="qalaa-fade">
-          <rect x={BOUNDARY_X - 3} y={BRIDGE_Y - 26} width={6} height={52} fill={C.deny} />
-          <text x={BOUNDARY_X + 14} y={BRIDGE_Y - 36} fontSize="10" fontWeight={600} fill={C.deny} fontFamily="var(--font-geist-sans)" letterSpacing="0.14em">
-            STOPPED AT ENTITY B POLICY
+          <rect x={BOUNDARY_X - 4} y={BRIDGE_Y - 28} width={8} height={56} fill={C.deny} />
+          <text x={BOUNDARY_X + 14} y={BRIDGE_Y - 38} fontSize="11.5" fontWeight={600} fill={C.deny} fontFamily={SANS} letterSpacing="0.1em">
+            ENTITY B VETO
           </text>
         </g>
       )}
@@ -415,45 +396,49 @@ function ResourceTree({
         const rowGlow = isFocus && fc && (focus.stopAt === "resource" || focus.stopAt === "none") ? fc : null;
         const branchColor = st.denied ? C.deny : bridgeActive && st.granted ? (st.gated ? C.stepup : C.allow) : C.faint;
         const isolated = r.id === "connector-b-17" && snapshot.connector.isolated;
+        const cy = y + TILE_H / 2;
+        const isSelected = sameRef(selected, { kind: "resource", id: r.id });
+        const sub = st.denied
+          ? "CITIZEN_PII · outside delegated scope"
+          : r.id === "connector-b-17" && isolated
+            ? "State changed under exact human approval"
+            : r.id === "connector-b-17" && st.gated
+              ? pendingLabel ?? "Isolation requires an Entity B human"
+              : null;
         return (
-          <g key={r.id} className="qalaa-fade">
-            {/* branch */}
+          <g key={r.id} className="qalaa-fade cursor-pointer" onClick={() => onSelect({ kind: "resource", id: r.id })}>
             {st.denied ? (
               <>
-                <line x1={TREE_X} y1={y + 20} x2={ROW_X - 22} y2={y + 20} stroke={isFocus && boundaryStop ? C.deny : C.faint} strokeWidth={isFocus && boundaryStop ? 2 : 1} strokeDasharray="3 4" />
-                <circle cx={ROW_X - 12} cy={y + 20} r={6} fill="none" stroke={C.deny} strokeWidth={1.6} />
-                <line x1={ROW_X - 16} y1={y + 24} x2={ROW_X - 8} y2={y + 16} stroke={C.deny} strokeWidth={1.6} />
+                <line x1={TREE_X} y1={cy} x2={ROW_X - 16} y2={cy} stroke={isFocus && boundaryStop ? C.deny : C.faint} strokeWidth={isFocus && boundaryStop ? 2 : 1} strokeDasharray="3 4" />
+                <rect x={ROW_X - 14} y={cy - 9} width={3} height={18} fill={C.deny} />
               </>
             ) : (
-              <line x1={TREE_X} y1={y + 20} x2={ROW_X - 4} y2={y + 20} stroke={rowGlow ?? branchColor} strokeWidth={rowGlow ? 2.4 : bridgeActive && st.granted ? 2 : 1} strokeDasharray={bridgeActive && st.granted ? undefined : "2 5"} markerEnd={bridgeActive && st.granted ? arrowFor(rowGlow ?? branchColor) : undefined} />
+              <line
+                x1={TREE_X}
+                y1={cy}
+                x2={ROW_X - 4}
+                y2={cy}
+                stroke={rowGlow ?? branchColor}
+                strokeWidth={rowGlow ? 2.4 : bridgeActive && st.granted ? 2 : 1}
+                strokeDasharray={bridgeActive && st.granted ? undefined : "2 5"}
+                markerEnd={bridgeActive && st.granted ? arrowFor(rowGlow ?? branchColor) : undefined}
+              />
             )}
-            {/* row */}
-            {rowGlow && <rect x={ROW_X - 3} y={y - 3} width={ROW_W + 6} height={46} fill="none" stroke={rowGlow} strokeWidth={1.5} />}
-            <rect x={ROW_X} y={y} width={ROW_W} height={40} fill="#131920" stroke={st.state === "NO AUTHORITY" ? C.faint : color} strokeWidth={1.2} />
-            <rect x={ROW_X} y={y} width={4} height={40} fill={st.state === "NO AUTHORITY" ? C.faint : color} />
-            <text x={ROW_X + 14} y={y + 15} fontSize="9" fill={C.muted} fontFamily="var(--font-geist-sans)" letterSpacing="0.14em">
-              PROTECTED RESOURCE · {r.resourceClass}
+            {rowGlow && <rect x={ROW_X - 4} y={y - 4} width={ROW_W + 8} height={TILE_H + 8} fill="none" stroke={rowGlow} strokeWidth={1.5} />}
+            <rect x={ROW_X} y={y} width={ROW_W} height={TILE_H} fill={C.tile} stroke={isSelected ? C.text : "none"} strokeWidth={1.2} />
+            <rect x={ROW_X} y={y} width={3} height={TILE_H} fill={st.state === "NO AUTHORITY" ? C.faint : color} />
+            <text x={ROW_X + 18} y={y + 20} fontSize="10.5" fill={C.muted} fontFamily={SANS} letterSpacing="0.1em">
+              PROTECTED RESOURCE
             </text>
-            <text x={ROW_X + 14} y={y + 31} fontSize="14" fontWeight={600} fill={C.text} fontFamily="var(--font-geist-sans)">
+            <text x={ROW_X + 18} y={y + 43} fontSize="17" fontWeight={600} fill={C.text} fontFamily={SANS}>
               {r.displayName}
             </text>
-            <text x={ROW_X + ROW_W - 12} y={y + 31} fontSize="10.5" fontWeight={700} fill={color} fontFamily="var(--font-geist-mono)" textAnchor="end" letterSpacing="0.08em">
-              {st.state === "ISOLATED" ? "ACTIVE → ISOLATED" : st.state}
+            <text x={ROW_X + ROW_W - 16} y={y + 43} fontSize="12" fontWeight={700} fill={st.state === "NO AUTHORITY" ? C.faint : color} fontFamily={SANS} textAnchor="end" letterSpacing="0.08em">
+              {st.state === "ALLOWED" ? "ACCESS GRANTED" : st.state === "ISOLATED" ? "ISOLATED" : st.state === "NO AUTHORITY" ? "NO ACCESS" : st.state}
             </text>
-            {/* sub-tags */}
-            {st.denied && (
-              <text x={ROW_X + 14} y={y + 55} fontSize="10" fill={C.deny} fontFamily="var(--font-geist-sans)" letterSpacing="0.06em">
-                Not in delegated mandate · Policy B-3.0 · Entity B veto
-              </text>
-            )}
-            {r.id === "connector-b-17" && (st.gated || isolated) && (
-              <text x={ROW_X + 14} y={y + 55} fontSize="10" fill={isolated ? C.isolated : C.stepup} fontFamily="var(--font-geist-sans)" letterSpacing="0.06em">
-                {isolated ? `Isolated · state v${snapshot.connector.version} · approval consumed` : pendingLabel ? `Isolation requires Entity B human · ${pendingLabel}` : "Isolation requires exact Entity B human approval"}
-              </text>
-            )}
-            {r.id === "telemetry-b" && st.state === "ALLOWED" && (
-              <text x={ROW_X + 14} y={y + 55} fontSize="10" fill={C.allow} fontFamily="var(--font-geist-sans)" letterSpacing="0.06em">
-                Read permitted under lease scope · Policy B-1.1
+            {sub && (
+              <text x={ROW_X + 18} y={y + 61} fontSize="11.5" fill={st.denied ? C.deny : isolated ? C.isolated : C.stepup} fontFamily={SANS}>
+                {sub}
               </text>
             )}
           </g>

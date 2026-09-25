@@ -1,7 +1,7 @@
 import type { Action, AuthorityCheck, Decision, DecisionRecord, GovernanceEvent } from "@/lib/domain/types";
 import type { DemoStep, Snapshot } from "@/lib/snapshot";
 
-export type Tone = "neutral" | "allow" | "deny" | "stepup" | "info";
+export type Tone = "neutral" | "allow" | "deny" | "stepup" | "info" | "isolated";
 
 export const ACTION_META: Record<Action, { title: string; method: "GET" | "POST"; path: string; resourceId: string; target: string }> = {
   READ_TELEMETRY: { title: "Read security telemetry", method: "GET", path: "/api/entity-b/security-telemetry", resourceId: "telemetry-b", target: "Entity B / Security Telemetry" },
@@ -13,6 +13,13 @@ export const ACTION_META: Record<Action, { title: string; method: "GET" | "POST"
 export function actionFromPath(path: string): Action | null {
   const hit = (Object.keys(ACTION_META) as Action[]).find((a) => ACTION_META[a].path === path);
   return hit ?? null;
+}
+
+/** A selectable operational object on the common operating picture. */
+export type ObjectRef = { kind: "agent" } | { kind: "mission" } | { kind: "lease" } | { kind: "entity"; id: "entity-a" | "entity-b" } | { kind: "resource"; id: string };
+
+export function minutesRemaining(until: string, now: string): number {
+  return Math.max(0, Math.round((new Date(until).getTime() - new Date(now).getTime()) / 60000));
 }
 
 /** Where along the authority chain a decision stopped, for the graph. */
@@ -45,18 +52,19 @@ export function stopPointFor(code: string, decision: Decision): StopPoint {
 /** Short operator-facing label for a resolver check; the raw string stays as evidence. */
 export function checkLabel(check: string): string {
   if (check.startsWith("Principal")) return "Identity";
-  if (check.includes(" bound to ") || check.startsWith("Resource ")) return check.startsWith("Resource class") ? "Entity B policy — resource class" : "Resource binding";
-  if (check.startsWith("Owner policy")) return "Entity B policy loaded";
+  if (check.startsWith("Resource class")) return "Resource class";
+  if (check.includes(" bound to ") || check.startsWith("Resource ")) return "Resource binding";
+  if (check.startsWith("Owner policy")) return "Entity B policy";
   if (check.startsWith("Mission")) return "Mission";
   if (check.startsWith("Authority lease exists")) return "Lease";
-  if (check.startsWith("Lease ") && check.includes("binds")) return "Lease";
+  if (check.startsWith("Lease ") && check.includes("binds")) return "Lease binding";
   if (check.startsWith("Lease ACTIVE")) return "Lease active";
-  if (check.startsWith("Approved by") || check.includes("issuer approval and")) return "Entity A approval · Entity B acceptance";
+  if (check.startsWith("Approved by") || check.includes("issuer approval and")) return "Issuer mandate · Entity B acceptance";
   if (check.includes("accepts")) return "Purpose & severity";
-  if (check.startsWith("Lease scope")) return "Resource scope — lease";
-  if (check.includes("policy permits")) return "Resource scope — Entity B policy";
+  if (check.startsWith("Lease scope")) return "Lease scope";
+  if (check.includes("policy permits")) return "Entity B policy scope";
   if (check.startsWith("Exact")) return "Human step-up";
-  if (check.startsWith("No human gate")) return "Human step-up — not required";
+  if (check.startsWith("No human gate")) return "Step-up — N/A";
   if (check.startsWith("Pre-mutation")) return "Pre-mutation recheck";
   return check;
 }
