@@ -381,7 +381,8 @@ export function CommandCenter() {
                         selected.body.decision === "ALLOW" ? "text-emerald-300" : selected.body.decision === "HUMAN_APPROVAL_REQUIRED" ? "text-amber-300" : "text-rose-300"
                       }`}
                     >
-                      {selected.body.decision} · {selected.body.code}
+                      {selected.body.decision}
+                      {selected.body.code !== selected.body.decision && ` · ${selected.body.code}`}
                     </div>
                     <div className="mt-1 leading-snug text-slate-300">{selected.body.reason}</div>
                     {selected.body.pendingRequestId && (
@@ -590,7 +591,14 @@ export function CommandCenter() {
 
           {!drawerHasWork && pending?.status !== "APPROVED" && (
             <div className="rounded-sm border border-white/10 bg-white/[0.02] p-4 text-slate-500">
-              Nothing awaiting Entity B. {lease?.status === "ACTIVE" ? "Lease is active; revoke from the console." : lease?.status === "PROPOSED" ? "Waiting for Entity A issuer approval first." : "Declare the incident and generate a proposal first."}
+              Nothing awaiting Entity B.{" "}
+              {lease?.status === "ACTIVE"
+                ? "Lease is active; revoke from the console."
+                : lease?.status === "PROPOSED"
+                  ? "Waiting for Entity A issuer approval first."
+                  : lease?.status === "REVOKED" || lease?.status === "EXPIRED"
+                    ? `Lease ${lease.id} is ${lease.status.toLowerCase()}; Agent 47 holds no authority. Reset or generate a new proposal.`
+                    : "Declare the incident and generate a proposal first."}
             </div>
           )}
 

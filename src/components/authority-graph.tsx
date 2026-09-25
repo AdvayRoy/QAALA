@@ -38,11 +38,11 @@ function anchor(from: string, to: string) {
   const dy = b.y - a.y;
   // Same-column vertical edges bulge outward so they don't cross intermediate nodes.
   if (Math.abs(dx) < 1 && Math.abs(dy) > 120) {
-    const side = a.x > W / 2 ? 1 : -1;
+    const side = a.x < 300 ? -1 : 1;
     const bulge = side * (a.w / 2 + 18 + Math.abs(dy) / 12);
     const start = { x: a.x + side * (a.w / 2), y: a.y + (dy > 0 ? 12 : -12) };
     const end = { x: b.x + side * (b.w / 2), y: b.y + (dy > 0 ? -12 : 12) };
-    return { start, end, c1: { x: a.x + bulge, y: start.y }, c2: { x: b.x + bulge, y: end.y }, labelX: a.x + bulge * 0.78 };
+    return { start, end, c1: { x: a.x + bulge, y: start.y }, c2: { x: b.x + bulge, y: end.y }, labelX: a.x + bulge * 0.62 };
   }
   const horizontal = Math.abs(dx) > Math.abs(dy);
   const start = horizontal
@@ -83,6 +83,15 @@ export function AuthorityGraphView({ graph, highlight }: { graph: AuthorityGraph
   const nodes = graph.nodes.filter((n) => POS[n.id]);
   const edges = graph.edges.filter((e) => POS[e.from] && POS[e.to]);
   const hasActive = edges.some((e) => e.kind === "ACTIVE_AUTHORITY");
+  // Parallel labelled edges between the same pair fan out vertically so labels never overlap.
+  const pairCounts = new Map<string, number>();
+  const pairIndex = new Map<string, number>();
+  for (const e of edges) {
+    if (e.kind === "AFFILIATION" || e.kind === "OWNS") continue;
+    const k = `${e.from}>${e.to}`;
+    pairIndex.set(e.id, pairCounts.get(k) ?? 0);
+    pairCounts.set(k, (pairCounts.get(k) ?? 0) + 1);
+  }
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" role="img" aria-label="Authority graph derived from server state">
@@ -112,10 +121,21 @@ export function AuthorityGraphView({ graph, highlight }: { graph: AuthorityGraph
       {edges.map((e) => {
         const g = anchor(e.from, e.to);
         if (!g) return null;
+        const n = pairCounts.get(`${e.from}>${e.to}`) ?? 1;
+        const i = pairIndex.get(e.id) ?? 0;
+        const off = (i - (n - 1) / 2) * 16;
+        if (off !== 0 && !g.labelX) {
+          g.start = { x: g.start.x, y: g.start.y + off };
+          g.end = { x: g.end.x, y: g.end.y + off };
+          g.c1 = { x: g.c1.x, y: g.c1.y + off };
+          g.c2 = { x: g.c2.x, y: g.c2.y + off };
+        }
         const s = EDGE_STYLE[e.kind];
         const d = `M ${g.start.x} ${g.start.y} C ${g.c1.x} ${g.c1.y}, ${g.c2.x} ${g.c2.y}, ${g.end.x} ${g.end.y}`;
         const structural = e.kind === "AFFILIATION" || e.kind === "OWNS";
-        const mid = { x: g.labelX ?? (g.start.x + g.end.x) / 2, y: (g.start.y + g.end.y) / 2 };
+        const mid = g.labelX
+          ? { x: g.labelX, y: Math.min(g.start.y, g.end.y) + 34 }
+          : { x: (g.start.x + g.end.x) / 2, y: (g.start.y + g.end.y) / 2 + (n > 1 ? off * 0.9 : 0) };
         return (
           <g key={e.id} className="transition-opacity duration-300">
             <path
