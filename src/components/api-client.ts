@@ -30,7 +30,7 @@ async function call<T>(method: "GET" | "POST", path: string, token?: string | nu
   const headers: Record<string, string> = { accept: "application/json" };
   if (token) headers[SESSION_HEADER] = token;
   if (body !== undefined) headers["content-type"] = "application/json";
-  const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), cache: "no-store" });
+  const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), cache: "no-store", signal: AbortSignal.timeout(15000) });
   const text = await res.text();
   let parsed: unknown = null;
   try {
