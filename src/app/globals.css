@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #070a10;
-  --foreground: #e2e8f0;
+  --background: #0b0e13;
+  --foreground: #d5dbe5;
   color-scheme: dark;
 }
 
@@ -17,16 +17,53 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-feature-settings: "tnum" 1, "cv11" 1;
 }
 
-.qalaa-flow {
-  stroke-dasharray: 10 6;
-  animation: qalaa-flow 1.4s linear infinite;
+button {
+  border-radius: 0;
 }
 
-@keyframes qalaa-flow {
+/* Operational state transitions: a state change is a cut, not a toast. */
+.qalaa-state-in {
+  animation: qalaa-state-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes qalaa-state-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
   to {
-    stroke-dashoffset: -16;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.qalaa-fade {
+  animation: qalaa-fade 360ms ease-out both;
+}
+@keyframes qalaa-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.qalaa-bridge-in {
+  transform-box: fill-box;
+  transform-origin: left center;
+  animation: qalaa-bridge-in 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes qalaa-bridge-in {
+  from {
+    opacity: 0;
+    transform: scaleX(0.2);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
@@ -35,6 +72,5 @@ body {
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1f2937;
-  border-radius: 4px;
+  background: #232b36;
 }
